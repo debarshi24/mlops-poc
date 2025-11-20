@@ -1,0 +1,255 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MLOps PoC: AWS CodePipeline + CodeBuild + SageMaker (Training, Evaluation & Deployment)
+  Triggered by GitHub CodeConnection
+
+Parameters:
+  CodeStarConnectionArn:
+    Type: String
+    Description: ARN of the AWS CodeStar Connections for GitHub (create in Developer Tools > Connections)
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name (e.g., mlops-poc)
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: GitHub branch to trigger pipeline from
+  S3BucketName:
+    Type: String
+    Default: mlops-poc-artifacts-debarshi
+    Description: S3 bucket for ML data, model artifacts, and pipeline assets
+  ModelPackageGroupName:
+    Type: String
+    Default: mlops-poc-model-group
+    Description: SageMaker Model Package Group name for model versioning
+
+Resources:
+
+  # -------------------------------------------------
+  # S3 Bucket (Artifacts & Model Storage)
+  # -------------------------------------------------
+  MLOpsArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: MLOpsArtifactsBucket
+
+  # -------------------------------------------------
+  # IAM Roles
+  # -------------------------------------------------
+
+  ## CodePipeline Role
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "MLOps-CodePipelineRole-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelinePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: "*"
+
+  ## CodeBuild Role (Training)
+  CodeBuildTrainRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "MLOps-CodeBuildTrainRole-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  ## CodeBuild Role (Deployment)
+  CodeBuildDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "MLOps-CodeBuildDeployRole-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  ## SageMaker Execution Role
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "MLOps-SageMakerRole-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  # -------------------------------------------------
+  # SageMaker Model Package Group
+  # -------------------------------------------------
+  SageMakerModelPackageGroup:
+    Type: AWS::SageMaker::ModelPackageGroup
+    Properties:
+      ModelPackageGroupName: !Ref ModelPackageGroupName
+      ModelPackageGroupDescription: "Model registry for versioned models in MLOps PoC"
+
+  # -------------------------------------------------
+  # CodeBuild Projects
+  # -------------------------------------------------
+
+  ## Training Project
+  CodeBuildTrainProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "MLOps-Train-${AWS::StackName}"
+      ServiceRole: !GetAtt CodeBuildTrainRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: S3_BUCKET
+            Value: !Ref S3BucketName
+          - Name: SAGEMAKER_ROLE_ARN
+            Value: !GetAtt SageMakerExecutionRole.Arn
+          - Name: MODEL_PACKAGE_GROUP
+            Value: !Ref ModelPackageGroupName
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 30
+
+  ## Deployment Project
+  CodeBuildDeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "MLOps-Deploy-${AWS::StackName}"
+      ServiceRole: !GetAtt CodeBuildDeployRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: S3_BUCKET
+            Value: !Ref S3BucketName
+          - Name: MODEL_PACKAGE_GROUP
+            Value: !Ref ModelPackageGroupName
+          - Name: SAGEMAKER_ROLE_ARN
+            Value: !GetAtt SageMakerExecutionRole.Arn
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 20
+
+  # -------------------------------------------------
+  # CodePipeline
+  # -------------------------------------------------
+  MLOpsCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "MLOps-Pipeline-${AWS::StackName}"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3BucketName
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: 1
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                FullRepositoryId: !Ref GitHubRepo
+                BranchName: !Ref GitHubBranch
+              OutputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+
+        - Name: Train
+          Actions:
+            - Name: RunTraining
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: TrainOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildTrainProject
+              RunOrder: 1
+
+        - Name: Deploy
+          Actions:
+            - Name: RunDeployment
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              InputArtifacts:
+                - Name: TrainOutput
+              Configuration:
+                ProjectName: !Ref CodeBuildDeployProject
+              RunOrder: 1
+
+Outputs:
+  PipelineName:
+    Description: CodePipeline name
+    Value: !Ref MLOpsCodePipeline
+
+  PipelineURL:
+    Description: CodePipeline console link
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${MLOpsCodePipeline}/view?region=${AWS::Region}"
+
+  S3Bucket:
+    Description: S3 bucket used for artifacts and models
+    Value: !Ref MLOpsArtifactsBucket
+
+  SageMakerModelRegistry:
+    Description: SageMaker Model Package Group
+    Value: !Ref SageMakerModelPackageGroup
