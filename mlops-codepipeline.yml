@@ -166,14 +166,20 @@ Resources:
                   - sagemaker:CreateTrainingJob
                   - sagemaker:DescribeTrainingJob
                   - sagemaker:CreateModel
+                Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
                   - sagemaker:CreateModelPackage
                   - sagemaker:DescribeModelPackage
                   - sagemaker:ListModelPackages
+                  - sagemaker:UpdateModelPackage
+                Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:model-package-group/${ModelPackageGroupName}/*'
+              - Effect: Allow
+                Action:
                   - sagemaker:CreateModelPackageGroup
                   - sagemaker:DescribeModelPackageGroup
-                  - sagemaker:UpdateModelPackage
                   - sagemaker:ListModelPackageGroups
-                Resource: '*'
+                Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:model-package-group/${ModelPackageGroupName}'
               - Effect: Allow
                 Action:
                   - iam:PassRole
@@ -213,7 +219,7 @@ Resources:
                   - sagemaker:UpdateEndpoint
                   - sagemaker:DescribeEndpoint
                   - sagemaker:InvokeEndpoint
-                Resource: '*'
+                Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:*'
               - Effect: Allow
                 Action:
                   - iam:PassRole
@@ -470,7 +476,7 @@ Outputs:
     Description: S3 bucket for pipeline artifacts (bucket name)
     Value: !Ref ArtifactsBucket
 
-  SampleCSV_S3_URI:
+  SampleCSVS3URI:
     Description: S3 URI where the sample CSV should be placed for pipeline runs
     Value: !Sub 's3://${ArtifactsBucket}/data/raw/Topic_15_poc_customers.csv'
 
