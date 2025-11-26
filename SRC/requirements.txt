@@ -1,0 +1,10 @@
+boto3
+sagemaker
+pandas
+scikit-learn
+joblib
+pyarrow
+psutil
+pytest
+# optional: for nicer CLI
+python-dotenv

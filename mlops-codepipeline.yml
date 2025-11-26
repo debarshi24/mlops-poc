@@ -1,52 +1,80 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  MLOps PoC: AWS CodePipeline + CodeBuild + SageMaker (Training, Evaluation & Deployment)
-  Triggered by GitHub CodeConnection
+  Validated MLOps CFN: CodeStar Connection -> CodePipeline -> CodeBuild (Train, Deploy) -> SageMaker Model Package Group
+  Hardened S3, scoped IAM (for PoC), lifecycle, manual approval gate, and CodeBuild envs for DATA_S3_URI.
+
+# NOTE: The CodeStar connection ARN (CodeConnectionArn) must be created in the SAME AWS region
+# where you deploy this stack. If you deploy to a different region than the connection, the
+# pipeline source stage will fail.
 
 Parameters:
-  CodeStarConnectionArn:
+  GitHubOwner:
     Type: String
-    Description: ARN of the AWS CodeStar Connections for GitHub (create in Developer Tools > Connections)
+    Description: GitHub repository owner/organization
+    Default: debarshi24
   GitHubRepo:
     Type: String
-    Description: GitHub repository name (e.g., mlops-poc)
+    Description: GitHub repository name
+    Default: mlops-poc
   GitHubBranch:
     Type: String
     Default: main
-    Description: GitHub branch to trigger pipeline from
-  S3BucketName:
+    Description: GitHub branch to track
+  CodeConnectionArn:
     Type: String
-    Default: mlops-poc-artifacts-debarshi
-    Description: S3 bucket for ML data, model artifacts, and pipeline assets
+    Description: ARN of the CodeStar Connection to GitHub (must exist in the same region as this stack)
+    Default: arn:aws:codeconnections:eu-west-1:361509912577:connection/3600e1d6-0460-4922-938c-3e7c5ad02a74
   ModelPackageGroupName:
     Type: String
-    Default: mlops-poc-model-group
-    Description: SageMaker Model Package Group name for model versioning
+    Default: mlops-poc-model-group-dsa
+    Description: SageMaker Model Package Group name
+  AutoApproveModels:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Automatically approve models that meet criteria
+
+Mappings:
+  RegionToImage:
+    default:
+      CodeBuildImage: aws/codebuild/standard:7.0
 
 Resources:
 
-  # -------------------------------------------------
-  # S3 Bucket (Artifacts & Model Storage)
-  # -------------------------------------------------
-  MLOpsArtifactsBucket:
+  ####################################################
+  # S3 Bucket for artifacts (hardened & lifecycle)
+  ####################################################
+  ArtifactsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
     Properties:
-      BucketName: !Ref S3BucketName
       VersioningConfiguration:
         Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
       Tags:
-        - Key: Name
-          Value: MLOpsArtifactsBucket
+        - Key: Project
+          Value: MLOps-PoC
 
-  # -------------------------------------------------
-  # IAM Roles
-  # -------------------------------------------------
+  ####################################################
+  # IAM Roles (no explicit RoleName; CloudFormation will generate unique names)
+  ####################################################
 
-  ## CodePipeline Role
   CodePipelineRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "MLOps-CodePipelineRole-${AWS::StackName}"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -55,25 +83,61 @@ Resources:
               Service: codepipeline.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: CodePipelinePermissions
+        - PolicyName: CodePipelinePolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:GetObjectVersion
                   - s3:PutObject
                   - s3:GetBucketLocation
                   - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Join ['', [ !GetAtt ArtifactsBucket.Arn, '/*' ]]
+              - Effect: Allow
+                Action:
                   - codebuild:StartBuild
                   - codebuild:BatchGetBuilds
-                Resource: "*"
+                Resource:
+                  - !GetAtt CodeBuildProject.Arn
+                  - !GetAtt CodeBuildDeployProject.Arn
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref CodeConnectionArn
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt CodeBuildTrainRole.Arn
+                  - !GetAtt CodeBuildDeployRole.Arn
+                  - !GetAtt SageMakerExecutionRole.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
 
-  ## CodeBuild Role (Training)
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
   CodeBuildTrainRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "MLOps-CodeBuildTrainRole-${AWS::StackName}"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -82,15 +146,43 @@ Resources:
               Service: codebuild.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
         - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: CodeBuildTrainInline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Join ['', [ !GetAtt ArtifactsBucket.Arn, '/*' ]]
+              - Effect: Allow
+                Action:
+                  - sagemaker:CreateTrainingJob
+                  - sagemaker:DescribeTrainingJob
+                  - sagemaker:CreateModel
+                  - sagemaker:CreateModelPackage
+                  - sagemaker:DescribeModelPackage
+                  - sagemaker:ListModelPackages
+                  - sagemaker:CreateModelPackageGroup
+                  - sagemaker:DescribeModelPackageGroup
+                  - sagemaker:UpdateModelPackage
+                  - sagemaker:ListModelPackageGroups
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt SageMakerExecutionRole.Arn
 
-  ## CodeBuild Role (Deployment)
   CodeBuildDeployRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "MLOps-CodeBuildDeployRole-${AWS::StackName}"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -99,15 +191,38 @@ Resources:
               Service: codebuild.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
-        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
         - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: CodeBuildDeployInline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Join ['', [ !GetAtt ArtifactsBucket.Arn, '/*' ]]
+              - Effect: Allow
+                Action:
+                  - sagemaker:CreateEndpointConfig
+                  - sagemaker:CreateEndpoint
+                  - sagemaker:UpdateEndpoint
+                  - sagemaker:DescribeEndpoint
+                  - sagemaker:InvokeEndpoint
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt SageMakerExecutionRole.Arn
 
-  ## SageMaker Execution Role
   SageMakerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "MLOps-SageMakerRole-${AWS::StackName}"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -116,140 +231,253 @@ Resources:
               Service: sagemaker.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
-        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: SageMakerS3Inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Join ['', [ !GetAtt ArtifactsBucket.Arn, '/*' ]]
 
-  # -------------------------------------------------
+  ####################################################
   # SageMaker Model Package Group
-  # -------------------------------------------------
-  SageMakerModelPackageGroup:
+  ####################################################
+  ModelPackageGroup:
     Type: AWS::SageMaker::ModelPackageGroup
     Properties:
       ModelPackageGroupName: !Ref ModelPackageGroupName
-      ModelPackageGroupDescription: "Model registry for versioned models in MLOps PoC"
+      ModelPackageGroupDescription: 'Model package group for demo ML models'
+      Tags:
+        - Key: Project
+          Value: MLOps-Demo
+        - Key: Environment
+          Value: Development
+        - Key: Owner
+          Value: MLOps-Team
+        - Key: Purpose
+          Value: Automated-ML-Pipeline
 
-  # -------------------------------------------------
+  ####################################################
   # CodeBuild Projects
-  # -------------------------------------------------
+  ####################################################
 
-  ## Training Project
-  CodeBuildTrainProject:
+  CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub "MLOps-Train-${AWS::StackName}"
+      Name: !Sub '${AWS::StackName}-ml-train'
       ServiceRole: !GetAtt CodeBuildTrainRole.Arn
       Artifacts:
         Type: CODEPIPELINE
       Environment:
-        ComputeType: BUILD_GENERAL1_MEDIUM
-        Image: aws/codebuild/standard:7.0
         Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: !FindInMap [RegionToImage, default, CodeBuildImage]
         EnvironmentVariables:
-          - Name: S3_BUCKET
-            Value: !Ref S3BucketName
           - Name: SAGEMAKER_ROLE_ARN
             Value: !GetAtt SageMakerExecutionRole.Arn
-          - Name: MODEL_PACKAGE_GROUP
+          - Name: S3_BUCKET
+            Value: !Ref ArtifactsBucket
+          - Name: DATA_S3_URI
+            Value: !Sub 's3://${ArtifactsBucket}/data/raw/Topic_15_poc_customers.csv'
+          - Name: MODEL_PACKAGE_GROUP_NAME
             Value: !Ref ModelPackageGroupName
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: AUTO_APPROVE_MODELS
+            Value: !Ref AutoApproveModels
       Source:
         Type: CODEPIPELINE
-      TimeoutInMinutes: 30
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.9
+              commands:
+                - pip install --upgrade pip
+                - pip install -r requirements.txt
+            pre_build:
+              commands:
+                - echo "Training phase started on `date`"
+                - aws --version
+                - echo "S3_BUCKET=$S3_BUCKET"
+                - echo "DATA_S3_URI=$DATA_S3_URI"
+                - echo "MODEL_PACKAGE_GROUP_NAME=$MODEL_PACKAGE_GROUP_NAME"
+            build:
+              commands:
+                - echo "Build started on `date`"
+                - python ml_pipeline.py
+            post_build:
+              commands:
+                - echo "Build completed on `date`"
+                - echo "Artifacts produced:"
+                - ls -la
+          artifacts:
+            files:
+              - '**/*'
+            name: TrainingOutput
 
-  ## Deployment Project
   CodeBuildDeployProject:
     Type: AWS::CodeBuild::Project
     Properties:
-      Name: !Sub "MLOps-Deploy-${AWS::StackName}"
+      Name: !Sub '${AWS::StackName}-ml-deploy'
       ServiceRole: !GetAtt CodeBuildDeployRole.Arn
       Artifacts:
         Type: CODEPIPELINE
       Environment:
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: aws/codebuild/standard:7.0
         Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !FindInMap [RegionToImage, default, CodeBuildImage]
         EnvironmentVariables:
-          - Name: S3_BUCKET
-            Value: !Ref S3BucketName
-          - Name: MODEL_PACKAGE_GROUP
-            Value: !Ref ModelPackageGroupName
           - Name: SAGEMAKER_ROLE_ARN
             Value: !GetAtt SageMakerExecutionRole.Arn
+          - Name: S3_BUCKET
+            Value: !Ref ArtifactsBucket
+          - Name: DATA_S3_URI
+            Value: !Sub 's3://${ArtifactsBucket}/data/raw/Topic_15_poc_customers.csv'
+          - Name: MODEL_PACKAGE_GROUP_NAME
+            Value: !Ref ModelPackageGroupName
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
-      TimeoutInMinutes: 20
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.9
+              commands:
+                - pip install --upgrade pip
+                - pip install boto3 sagemaker
+            pre_build:
+              commands:
+                - echo "Deployment phase started on `date`"
+                - echo "=== Debugging Artifacts ==="
+                - echo "Working directory: $(pwd)"
+                - echo "Listing current dir:"
+                - ls -la
+                - echo "Listing CODEBUILD_SRC_DIR (source artifact):"
+                - echo $CODEBUILD_SRC_DIR
+                - ls -la $CODEBUILD_SRC_DIR || true
+                - echo "Listing CODEBUILD_SRC_DIR_TrainingOutput:"
+                - ls -la $CODEBUILD_SRC_DIR_TrainingOutput || true
+                - echo "=== End Debugging ==="
+            build:
+              commands:
+                - echo "Deployment started on `date`"
+                - python deploy_model.py
+            post_build:
+              commands:
+                - echo "Deployment completed on `date`"
 
-  # -------------------------------------------------
-  # CodePipeline
-  # -------------------------------------------------
-  MLOpsCodePipeline:
+  ####################################################
+  # CodePipeline definition
+  ####################################################
+  MLOpsPipeline:
     Type: AWS::CodePipeline::Pipeline
+    DependsOn:
+      - CodeBuildProject
+      - CodeBuildDeployProject
+      - CodePipelineRole
     Properties:
-      Name: !Sub "MLOps-Pipeline-${AWS::StackName}"
+      Name: !Sub '${AWS::StackName}-mlops-pipeline'
       RoleArn: !GetAtt CodePipelineRole.Arn
       ArtifactStore:
         Type: S3
-        Location: !Ref S3BucketName
+        Location: !Ref ArtifactsBucket
       Stages:
         - Name: Source
           Actions:
-            - Name: GitHubSource
+            - Name: SourceAction
               ActionTypeId:
                 Category: Source
                 Owner: AWS
                 Provider: CodeStarSourceConnection
-                Version: 1
+                Version: '1'
               Configuration:
-                ConnectionArn: !Ref CodeStarConnectionArn
-                FullRepositoryId: !Ref GitHubRepo
+                ConnectionArn: !Ref CodeConnectionArn
+                FullRepositoryId: !Sub '${GitHubOwner}/${GitHubRepo}'
                 BranchName: !Ref GitHubBranch
+                OutputArtifactFormat: CODE_ZIP
               OutputArtifacts:
                 - Name: SourceOutput
               RunOrder: 1
 
-        - Name: Train
+        - Name: TrainAndEvaluate
           Actions:
-            - Name: RunTraining
+            - Name: TrainModel
               ActionTypeId:
                 Category: Build
                 Owner: AWS
                 Provider: CodeBuild
-                Version: 1
-              InputArtifacts:
-                - Name: SourceOutput
-              OutputArtifacts:
-                - Name: TrainOutput
+                Version: '1'
               Configuration:
-                ProjectName: !Ref CodeBuildTrainProject
+                ProjectName: !Ref CodeBuildProject
+                PrimarySource: SourceOutput
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: TrainingOutput
               RunOrder: 1
 
-        - Name: Deploy
+        - Name: ApprovalGate
           Actions:
-            - Name: RunDeployment
+            - Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: 'Please review generated metrics (in artifacts) and approve to deploy'
+              RunOrder: 1
+
+        - Name: DeployToStaging
+          Actions:
+            - Name: DeployModel
               ActionTypeId:
                 Category: Build
                 Owner: AWS
                 Provider: CodeBuild
-                Version: 1
-              InputArtifacts:
-                - Name: TrainOutput
+                Version: '1'
               Configuration:
                 ProjectName: !Ref CodeBuildDeployProject
+                PrimarySource: SourceOutput
+              InputArtifacts:
+                - Name: SourceOutput
+                - Name: TrainingOutput
               RunOrder: 1
 
 Outputs:
   PipelineName:
-    Description: CodePipeline name
-    Value: !Ref MLOpsCodePipeline
+    Description: Name of the CodePipeline
+    Value: !Ref MLOpsPipeline
 
-  PipelineURL:
-    Description: CodePipeline console link
-    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${MLOpsCodePipeline}/view?region=${AWS::Region}"
+  PipelineUrl:
+    Description: URL of the CodePipeline
+    Value: !Sub 'https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${MLOpsPipeline}/view?region=${AWS::Region}'
 
-  S3Bucket:
-    Description: S3 bucket used for artifacts and models
-    Value: !Ref MLOpsArtifactsBucket
+  ArtifactsBucket:
+    Description: S3 bucket for pipeline artifacts (bucket name)
+    Value: !Ref ArtifactsBucket
 
-  SageMakerModelRegistry:
-    Description: SageMaker Model Package Group
-    Value: !Ref SageMakerModelPackageGroup
+  SampleCSV_S3_URI:
+    Description: S3 URI where the sample CSV should be placed for pipeline runs
+    Value: !Sub 's3://${ArtifactsBucket}/data/raw/Topic_15_poc_customers.csv'
+
+  SageMakerRole:
+    Description: SageMaker execution role ARN
+    Value: !GetAtt SageMakerExecutionRole.Arn
+
+  ModelPackageGroup:
+    Description: SageMaker Model Package Group name
+    Value: !Ref ModelPackageGroupName
