@@ -367,16 +367,10 @@ Resources:
             pre_build:
               commands:
                 - echo "Deployment phase started on `date`"
-                - echo "=== Debugging Artifacts ==="
-                - echo "Working directory: $(pwd)"
-                - echo "Listing current dir:"
+                - echo "Working directory is $(pwd)"
                 - ls -la
-                - echo "Listing CODEBUILD_SRC_DIR (source artifact):"
-                - echo $CODEBUILD_SRC_DIR
-                - ls -la $CODEBUILD_SRC_DIR || true
-                - echo "Listing CODEBUILD_SRC_DIR_TrainingOutput:"
-                - ls -la $CODEBUILD_SRC_DIR_TrainingOutput || true
-                - echo "=== End Debugging ==="
+                - echo "Checking training artifacts"
+                - ls -la $CODEBUILD_SRC_DIR_TrainingOutput || echo "No training output found"
             build:
               commands:
                 - echo "Deployment started on `date`"
