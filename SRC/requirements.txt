@@ -1,10 +1,8 @@
 boto3
-sagemaker
+sagemaker>=2.159.0
 pandas
 scikit-learn
 joblib
 pyarrow
-psutil
 pytest
-# optional: for nicer CLI
 python-dotenv
