@@ -73,55 +73,52 @@ def main():
         local_csv = f"/tmp/{run_id}_data.csv"
         logger.info("Downloading dataset %s -> %s", data_s3, local_csv)
         download_s3_to_local(data_s3, local_csv)
-    except Exception as e:
-        logger.error("Pipeline failed: %s", e, exc_info=True)
-        raise
 
-    # 2) Preprocess (produces train.csv and test.csv locally)
-    tmp_prefix = f"/tmp/{run_id}"
-    logger.info("Preprocessing data...")
-    train_path, test_path = preprocess_csv(local_csv, output_prefix=tmp_prefix)
-    logger.info("Preprocess done. train=%s test=%s", train_path, test_path)
+        # 2) Preprocess (produces train.csv and test.csv locally)
+        tmp_prefix = f"/tmp/{run_id}"
+        logger.info("Preprocessing data...")
+        train_path, test_path = preprocess_csv(local_csv, output_prefix=tmp_prefix)
+        logger.info("Preprocess done. train=%s test=%s", train_path, test_path)
 
-    # 3) Train
-    model_local_path = f"/tmp/{run_id}_model.joblib"
-    logger.info("Training model...")
-    train_meta = train_model(train_path, model_local_path)
-    logger.info("Training finished. model saved to %s", model_local_path)
+        # 3) Train
+        model_local_path = f"/tmp/{run_id}_model.joblib"
+        logger.info("Training model...")
+        train_meta = train_model(train_path, model_local_path)
+        logger.info("Training finished. model saved to %s", model_local_path)
 
-    # 4) Evaluate
-    logger.info("Evaluating model...")
-    metrics = evaluate_model(model_local_path, test_path)
-    logger.info("Evaluation metrics: %s", metrics)
+        # 4) Evaluate
+        logger.info("Evaluating model...")
+        metrics = evaluate_model(model_local_path, test_path)
+        logger.info("Evaluation metrics: %s", metrics)
 
-    # 5) Upload model and artifacts to S3
-    model_s3_key = f"models/{run_id}/model.joblib"
-    model_s3_uri = upload_file_to_s3(bucket, model_local_path, model_s3_key)
-    logger.info("Uploaded model to %s", model_s3_uri)
+        # 5) Upload model and artifacts to S3
+        model_s3_key = f"models/{run_id}/model.joblib"
+        model_s3_uri = upload_file_to_s3(bucket, model_local_path, model_s3_key)
+        logger.info("Uploaded model to %s", model_s3_uri)
 
-    metrics_key = f"artifacts/{run_id}/metrics.json"
-    save_json_to_s3(bucket, metrics, metrics_key)
-    logger.info("Uploaded metrics to s3://%s/%s", bucket, metrics_key)
+        metrics_key = f"artifacts/{run_id}/metrics.json"
+        save_json_to_s3(bucket, metrics, metrics_key)
+        logger.info("Uploaded metrics to s3://%s/%s", bucket, metrics_key)
 
-    model_info = {
-        "run_id": run_id,
-        "commit": commit,
-        "model_s3_uri": model_s3_uri,
-        "metrics": metrics,
-        "trained_at": datetime.utcnow().isoformat() + "Z"
-    }
-    model_info_key = f"artifacts/{run_id}/model_info.json"
-    save_json_to_s3(bucket, model_info, model_info_key)
-    logger.info("Uploaded model info to s3://%s/%s", bucket, model_info_key)
+        model_info = {
+            "run_id": run_id,
+            "commit": commit,
+            "model_s3_uri": model_s3_uri,
+            "metrics": metrics,
+            "trained_at": datetime.utcnow().isoformat() + "Z"
+        }
+        model_info_key = f"artifacts/{run_id}/model_info.json"
+        save_json_to_s3(bucket, model_info, model_info_key)
+        logger.info("Uploaded model info to s3://%s/%s", bucket, model_info_key)
 
-    # 6) Optional: register model in SageMaker Model Registry (placeholder)
-    if register_model_flag == "true":
-        logger.info("REGISTER_MODEL=true: Model registration is environment-specific and is not fully implemented in this script.")
-        # Implementing a robust CreateModelPackage flow requires packaging a container or using a pre-built inference container.
-        # For now we simply record model_info.json which downstream processes or manual steps can use to register the model.
-        # You can optionally use boto3/sagemaker SDK here to call CreateModelPackage with proper parameters.
+        # 6) Optional: register model in SageMaker Model Registry (placeholder)
+        if register_model_flag == "true":
+            logger.info("REGISTER_MODEL=true: Model registration is environment-specific and is not fully implemented in this script.")
+            # Implementing a robust CreateModelPackage flow requires packaging a container or using a pre-built inference container.
+            # For now we simply record model_info.json which downstream processes or manual steps can use to register the model.
+            # You can optionally use boto3/sagemaker SDK here to call CreateModelPackage with proper parameters.
 
-    # 7) Print outputs for CodeBuild logs
+        # 7) Print outputs for CodeBuild logs
         logger.info("Pipeline run complete: %s", run_id)
         logger.info("Model S3 URI: %s", model_s3_uri)
         logger.info("Metrics: %s", metrics)
