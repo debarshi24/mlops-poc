@@ -83,7 +83,7 @@ def main():
         # 3) Train
         model_local_path = f"/tmp/{run_id}_model.joblib"
         logger.info("Training model...")
-        train_meta = train_model(train_path, model_local_path)
+        train_meta = train_model(train_path, model_local_path, target_col="churned")
         logger.info("Training finished. model saved to %s", model_local_path)
 
         # 4) Evaluate
