@@ -366,18 +366,14 @@ Resources:
                 - pip install boto3 sagemaker
             pre_build:
               commands:
-                - echo "Deployment phase started on `date`"
-                - echo "Working directory is $(pwd)"
+                - echo "Deployment started"
                 - ls -la
-                - echo "Checking training artifacts"
-                - ls -la $CODEBUILD_SRC_DIR_TrainingOutput || echo "No training output found"
             build:
               commands:
-                - echo "Deployment started on `date`"
                 - python deploy_model.py
             post_build:
               commands:
-                - echo "Deployment completed on `date`"
+                - echo "Deployment completed"
 
   ####################################################
   # CodePipeline definition
