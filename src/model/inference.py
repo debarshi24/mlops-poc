@@ -90,4 +90,8 @@ def predict_fn(input_data, model):
         return preds
 
 
-def output_fn(prediction, a_
+def output_fn(prediction, accept="application/json"):
+    """
+    Format the prediction output.
+    """
+    return json.dumps({"predictions": prediction.tolist()}), accept
