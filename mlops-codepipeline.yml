@@ -327,7 +327,6 @@ Resources:
             Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec-deploy.yml
 
   ####################################################
   # CodePipeline definition
