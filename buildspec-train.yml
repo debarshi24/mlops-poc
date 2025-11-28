@@ -6,17 +6,9 @@ phases:
     commands:
       - pip install --upgrade pip
       - pip install -r requirements.txt
-  pre_build:
-    commands:
-      - echo Training phase started
-      - aws --version
   build:
     commands:
       - python ml_pipeline.py
-  post_build:
-    commands:
-      - echo Build completed
-      - ls -la
 artifacts:
   files:
     - '**/*'
