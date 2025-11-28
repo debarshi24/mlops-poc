@@ -11,40 +11,28 @@ phases:
     runtime-versions:
       python: 3.9
     commands:
-      - echo "Install phase: upgrade pip and install requirements"
+      - echo "Install phase started"
       - pip install --upgrade pip
-      - if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install boto3 sagemaker; fi
+      - pip install -r requirements.txt
 
   pre_build:
     commands:
-      - echo "Pre-build: show python version and current dir"
-      - python -c "import sys,os; print('Python', sys.version); print('PWD', os.getcwd())"
-      - echo "Checking required deploy environment variables..."
-      - |
-        if [ -z "$S3_BUCKET" ] || [ -z "$SAGEMAKER_ROLE_ARN" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
-          echo "WARNING: One or more deploy env vars are not set: S3_BUCKET, SAGEMAKER_ROLE_ARN, AWS_DEFAULT_REGION"
-          echo "If you intend to run deployment in this job, set those in the CodeBuild project or pipeline."
-        else
-          echo "Deploy env vars present."
-        fi
+      - echo "Training phase started on `date`"
+      - aws --version
+      - echo "S3_BUCKET=$S3_BUCKET"
+      - echo "DATA_S3_URI=$DATA_S3_URI"
+      - echo "MODEL_PACKAGE_GROUP_NAME=$MODEL_PACKAGE_GROUP_NAME"
 
   build:
     commands:
-      - echo "Build: running training pipeline (ml_pipeline.py)"
+      - echo "Build started on `date`"
       - python ml_pipeline.py
-      - echo "Training finished. Show created files (models/ and TrainingOutput/ if any):"
-      - ls -la || true
-      - ls -la models || true
 
   post_build:
     commands:
-      - echo "Post-build: running deployment (deploy_model.py)"
-      - |
-        if [ -z "$S3_BUCKET" ] || [ -z "$SAGEMAKER_ROLE_ARN" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
-          echo "Skipping deploy: missing required environment variables (S3_BUCKET, SAGEMAKER_ROLE_ARN, AWS_DEFAULT_REGION)."
-          exit 0
-        fi
-      - python deploy_model.py
+      - echo "Build completed on `date`"
+      - echo "Artifacts produced:"
+      - ls -la
 
 artifacts:
   files:
