@@ -8,6 +8,5 @@ phases:
   build:
     commands: [python ml_pipeline.py]
 artifacts:
-  files:
-    - '**/*'
+  files: ['**/*']
   name: TrainingOutput
