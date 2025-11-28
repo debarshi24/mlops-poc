@@ -355,18 +355,7 @@ Resources:
             Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
-        BuildSpec: |
-          version: 0.2
-          phases:
-            install:
-              runtime-versions:
-                python: 3.9
-              commands:
-                - pip install --upgrade pip
-                - pip install boto3 sagemaker
-            build:
-              commands:
-                - python deploy_model.py
+        BuildSpec: buildspec-deploy.yml
 
   ####################################################
   # CodePipeline definition
