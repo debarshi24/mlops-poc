@@ -28,6 +28,7 @@ from sagemaker.sklearn.model import SKLearnModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("deploy_model")
 
+
 def parse_s3_uri(s3_uri):
     parsed = urlparse(s3_uri)
     if parsed.scheme != "s3":
@@ -36,29 +37,60 @@ def parse_s3_uri(s3_uri):
     key = parsed.path.lstrip("/")
     return bucket, key
 
+
 def download_s3_file(s3_client, bucket, key, local_path):
-    os.makedirs(os.path.dirname(local_path), exist_ok=True)
-    s3_client.download_file(bucket, key, local_path)
+    """
+    Download S3 object to local_path. Create parent directories (use '.' if dirname empty).
+    """
+    dirname = os.path.dirname(local_path) or "."
+    os.makedirs(dirname, exist_ok=True)
+    logger.info("Downloading s3://%s/%s -> %s", bucket, key, local_path)
+    try:
+        s3_client.download_file(bucket, key, local_path)
+    except Exception as e:
+        logger.exception("Failed to download s3://%s/%s: %s", bucket, key, e)
+        raise
     return local_path
 
+
 def upload_file_to_s3(s3_client, local_path, bucket, key):
-    s3_client.upload_file(local_path, bucket, key)
+    """
+    Upload local_path to s3://bucket/key. Returns s3 uri.
+    """
+    if not os.path.exists(local_path):
+        raise FileNotFoundError(f"Local file not found: {local_path}")
+    logger.info("Uploading %s -> s3://%s/%s", local_path, bucket, key)
+    try:
+        s3_client.upload_file(local_path, bucket, key)
+    except Exception as e:
+        logger.exception("Failed to upload %s to s3://%s/%s: %s", local_path, bucket, key, e)
+        raise
     return f"s3://{bucket}/{key}"
 
+
 def find_latest_model_s3(s3_client, bucket, prefix="models/"):
+    """
+    Returns the S3 URI of the most recently modified model artifact under prefix
+    matching common extensions (.joblib, .pkl, .tar.gz). Returns None if nothing found.
+    """
     paginator = s3_client.get_paginator("list_objects_v2")
-    keys = []
+    candidates = []  # list of (LastModified, Key)
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
-            k = obj["Key"]
-            if k.endswith("model.joblib") or k.endswith(".joblib") or k.endswith(".pkl") or k.endswith("model.pkl"):
-                keys.append(k)
-            if k.endswith("model.tar.gz"):
-                keys.append(k)
-    if not keys:
+            k = obj.get("Key")
+            if not k:
+                continue
+            lower = k.lower()
+            if lower.endswith(".joblib") or lower.endswith(".pkl") or lower.endswith("model.tar.gz") or lower.endswith(".tar.gz"):
+                lm = obj.get("LastModified")
+                candidates.append((lm, k))
+    if not candidates:
         return None
-    keys.sort()
-    return f"s3://{bucket}/{keys[-1]}"
+    # sort by LastModified, pick newest
+    candidates.sort(key=lambda t: t[0])
+    latest_key = candidates[-1][1]
+    return f"s3://{bucket}/{latest_key}"
+
 
 def ensure_model_tar(s3_client, model_s3_uri, bucket, s3_prefix_for_deployment):
     """
@@ -67,46 +99,57 @@ def ensure_model_tar(s3_client, model_s3_uri, bucket, s3_prefix_for_deployment):
     If it points to a joblib/pkl, download, package into model.tar.gz with model.joblib inside, and upload.
     Returns s3://bucket/<key-to-tar.gz>
     """
+    # If explicit tar.gz given, return as-is
     if model_s3_uri and model_s3_uri.endswith(".tar.gz"):
+        logger.info("Explicit tar.gz provided: %s", model_s3_uri)
         return model_s3_uri
 
-    # Parse model_s3_uri or assume latest in bucket
+    # Resolve model location
     if model_s3_uri:
         model_bucket, model_key = parse_s3_uri(model_s3_uri)
     else:
-        # find latest model in bucket
         found = find_latest_model_s3(s3_client, bucket)
         if not found:
             raise RuntimeError("No model artifact found in bucket under models/ prefix")
         model_bucket, model_key = parse_s3_uri(found)
 
-    # If it's already a tar.gz
+    # If it's already a tar.gz (key)
     if model_key.endswith(".tar.gz"):
         return f"s3://{model_bucket}/{model_key}"
 
-    # Download the raw model file
+    # Download raw model file
     tmpdir = tempfile.mkdtemp()
     local_model_path = os.path.join(tmpdir, os.path.basename(model_key))
     logger.info("Downloading model from s3://%s/%s to %s", model_bucket, model_key, local_model_path)
     download_s3_file(s3_client, model_bucket, model_key, local_model_path)
 
-    # Create tar.gz with model.joblib (SageMaker convention)
+    # Package into tar.gz with filename model.joblib (SageMaker expectation)
     tar_name = f"model-{uuid.uuid4().hex}.tar.gz"
     local_tar_path = os.path.join(tmpdir, tar_name)
     logger.info("Creating tar.gz %s with model file inside named 'model.joblib'", local_tar_path)
-    with tarfile.open(local_tar_path, "w:gz") as tar:
-        arcname = "model.joblib"
-        tar.add(local_model_path, arcname=arcname)
+    try:
+        with tarfile.open(local_tar_path, "w:gz") as tar:
+            arcname = "model.joblib"
+            tar.add(local_model_path, arcname=arcname)
+    except Exception as e:
+        logger.exception("Failed to create tar.gz %s: %s", local_tar_path, e)
+        raise
 
-    # Upload tar.gz to deployment prefix
+    # Upload tar.gz to deployment prefix in the same bucket that CodeBuild/CFN expects (bucket param)
     deploy_key = f"{s3_prefix_for_deployment.rstrip('/')}/{tar_name}"
     s3_upload_path = upload_file_to_s3(s3_client, local_tar_path, bucket, deploy_key)
     logger.info("Uploaded packaged model to %s", s3_upload_path)
     return s3_upload_path
 
+
 def create_and_deploy(endpoint_name, model_data_s3_uri, role_arn, region, instance_type="ml.t3.medium"):
     sess = sagemaker.Session(boto_session=boto3.Session(region_name=region))
     entry_point = "src/model/inference.py"  # ensure this exists in repo
+
+    # warn if entry_point not present in repo (helps catch packaging errors)
+    if not os.path.exists(entry_point):
+        logger.warning("Entry point %s not found in repository. Deployment may fail if entry point is missing.", entry_point)
+
     model = SKLearnModel(
         model_data=model_data_s3_uri,
         role=role_arn,
@@ -126,6 +169,7 @@ def create_and_deploy(endpoint_name, model_data_s3_uri, role_arn, region, instan
     logger.info("Endpoint created: %s", endpoint_name)
     return endpoint_name, predictor
 
+
 def delete_endpoint(endpoint_name, region):
     sm = boto3.client("sagemaker", region_name=region)
     try:
@@ -139,6 +183,7 @@ def delete_endpoint(endpoint_name, region):
         sm.delete_endpoint_config(EndpointConfigName=cfg_name)
     except Exception:
         pass
+
 
 def main():
     bucket = os.environ.get("S3_BUCKET")
@@ -155,7 +200,12 @@ def main():
     s3_client = boto3.client("s3", region_name=region)
 
     # Prepare a deployable model.tar.gz in S3
-    model_data_s3_uri = ensure_model_tar(s3_client, explicit_model_s3, bucket, s3_prefix_for_deployment="models/deployed")
+    model_data_s3_uri = ensure_model_tar(
+        s3_client,
+        explicit_model_s3,
+        bucket,
+        s3_prefix_for_deployment="models/deployed"
+    )
     logger.info("Model data prepared at: %s", model_data_s3_uri)
 
     # Create & deploy model (using SageMaker SKLearnModel)
@@ -169,6 +219,7 @@ def main():
     if cleanup:
         delete_endpoint(endpoint, region)
         logger.info("Cleanup requested — endpoint deleted")
+
 
 if __name__ == "__main__":
     main()
