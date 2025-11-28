@@ -6,5 +6,4 @@ phases:
     commands:
       - pip install --upgrade pip && pip install boto3 sagemaker
   build:
-    commands:
-      - python deploy_model.py
+    commands: [python deploy_model.py]
