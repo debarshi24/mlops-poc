@@ -366,14 +366,14 @@ Resources:
                 - pip install boto3 sagemaker
             pre_build:
               commands:
-                - echo "Deployment started"
+                - echo Deployment started
                 - ls -la
             build:
               commands:
                 - python deploy_model.py
             post_build:
               commands:
-                - echo "Deployment completed"
+                - echo Deployment completed
 
   ####################################################
   # CodePipeline definition
