@@ -1,9 +1,52 @@
 version: 0.2
+
+env:
+  # optional constants you can override in CodeBuild environment settings
+  variables:
+    S3_PREFIX_FOR_DEPLOYMENT: "models/deployed"
+    # NOTE: set S3_BUCKET, SAGEMAKER_ROLE_ARN and AWS_DEFAULT_REGION in CodeBuild environment variables
+
 phases:
   install:
     runtime-versions:
       python: 3.9
     commands:
-      - pip install --upgrade pip && pip install boto3 sagemaker
+      - echo "Install phase: upgrade pip and install requirements"
+      - pip install --upgrade pip
+      - if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install boto3 sagemaker; fi
+
+  pre_build:
+    commands:
+      - echo "Pre-build: show python version and current dir"
+      - python -c "import sys,os; print('Python', sys.version); print('PWD', os.getcwd())"
+      - echo "Checking required deploy environment variables..."
+      - |
+        if [ -z "$S3_BUCKET" ] || [ -z "$SAGEMAKER_ROLE_ARN" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
+          echo "WARNING: One or more deploy env vars are not set: S3_BUCKET, SAGEMAKER_ROLE_ARN, AWS_DEFAULT_REGION"
+          echo "If you intend to run deployment in this job, set those in the CodeBuild project or pipeline."
+        else
+          echo "Deploy env vars present."
+        fi
+
   build:
-    commands: [python deploy_model.py]
+    commands:
+      - echo "Build: running training pipeline (ml_pipeline.py)"
+      - python ml_pipeline.py
+      - echo "Training finished. Show created files (models/ and TrainingOutput/ if any):"
+      - ls -la || true
+      - ls -la models || true
+
+  post_build:
+    commands:
+      - echo "Post-build: running deployment (deploy_model.py)"
+      - |
+        if [ -z "$S3_BUCKET" ] || [ -z "$SAGEMAKER_ROLE_ARN" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
+          echo "Skipping deploy: missing required environment variables (S3_BUCKET, SAGEMAKER_ROLE_ARN, AWS_DEFAULT_REGION)."
+          exit 0
+        fi
+      - python deploy_model.py
+
+artifacts:
+  files:
+    - '**/*'
+  name: MLOpsOutput
