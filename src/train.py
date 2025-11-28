@@ -32,32 +32,26 @@ def upload_file_to_s3(local_path, bucket, key):
     s3.upload_file(local_path, bucket, key)
     return f"s3://{bucket}/{key}"
 
-def train_model(data_path=None, target_col="target"):
+def train_model(data_path, output_path=None, target_col="target"):
     """
-    Trains a simple sklearn pipeline and writes models/model.joblib.
-    - data_path: local CSV path or s3://... path. If None, reads DATA_S3_URI env var.
+    Trains a simple sklearn pipeline and writes model to output_path.
+    - data_path: local CSV path (required)
+    - output_path: where to save model.joblib (optional, defaults to models/model.joblib)
     - target_col: name of target column in CSV.
-    Returns path to local model file.
+    Returns dict with model metadata.
     """
-    # Resolve dataset
-    if data_path is None:
-        data_path = os.environ.get("DATA_S3_URI", "data/raw/Topic_15_poc_customers.csv")
-
-    local_data = data_path
-    if data_path.startswith("s3://"):
-        local_data = "/tmp/dataset.csv"
-        download_s3_to_local(data_path, local_data)
-
-    logger.info("Loading data from %s", local_data)
-    df = pd.read_csv(local_data)
+    logger.info("Loading data from %s", data_path)
+    df = pd.read_csv(data_path)
 
     if target_col not in df.columns:
-        # try to find last column as target if default missing
         target_col = df.columns[-1]
         logger.warning("Target column not found; using %s", target_col)
 
     X = df.drop(columns=[target_col])
     y = df[target_col]
+    
+    # Apply one-hot encoding to match preprocessing
+    X = pd.get_dummies(X)
 
     logger.info("Training model on %d rows, %d features", X.shape[0], X.shape[1])
 
@@ -68,35 +62,46 @@ def train_model(data_path=None, target_col="target"):
 
     pipe.fit(X, y)
 
-    # Ensure output dir
-    out_dir = os.environ.get("MODEL_OUTPUT_DIR", "models")
-    os.makedirs(out_dir, exist_ok=True)
-    local_model_path = os.path.join(out_dir, "model.joblib")
-    joblib.dump(pipe, local_model_path)
-    logger.info("Saved model to %s", local_model_path)
+    # Determine output path
+    if output_path is None:
+        out_dir = os.environ.get("MODEL_OUTPUT_DIR", "models")
+        os.makedirs(out_dir, exist_ok=True)
+        output_path = os.path.join(out_dir, "model.joblib")
+    else:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    
+    joblib.dump(pipe, output_path)
+    logger.info("Saved model to %s", output_path)
 
     # Optionally upload to S3 for deploy step
     s3_bucket = os.environ.get("S3_BUCKET")
     if s3_bucket:
-        s3_key = f"models/{os.path.basename(local_model_path)}"
-        s3_uri = upload_file_to_s3(local_model_path, s3_bucket, s3_key)
+        s3_key = f"models/{os.path.basename(output_path)}"
+        s3_uri = upload_file_to_s3(output_path, s3_bucket, s3_key)
         logger.info("Uploaded model to %s", s3_uri)
 
-    return local_model_path
+    return {"model_path": output_path, "n_features": X.shape[1], "n_samples": X.shape[0]}
 
 def main():
     # Keep it robust for CodeBuild
     data_env = os.environ.get("DATA_S3_URI")
+    
+    local_data = None
     if data_env:
-        train_model(data_path=data_env)
+        if data_env.startswith("s3://"):
+            local_data = "/tmp/dataset.csv"
+            download_s3_to_local(data_env, local_data)
+        else:
+            local_data = data_env
     else:
-        # if local data exists, use it; otherwise fail with helpful log
         local_example = "data/raw/Topic_15_poc_customers.csv"
         if os.path.exists(local_example):
-            train_model(data_path=local_example)
+            local_data = local_example
         else:
             logger.error("No DATA_S3_URI and no local %s; failing", local_example)
             raise SystemExit(1)
+    
+    train_model(data_path=local_data)
 
 if __name__ == "__main__":
     main()
