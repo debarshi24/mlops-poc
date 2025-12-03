@@ -37,9 +37,6 @@ Mappings:
 
 Resources:
 
-  ####################################################
-  # S3 Bucket for artifacts (hardened & lifecycle)
-  ####################################################
   ArtifactsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -63,10 +60,6 @@ Resources:
       Tags:
         - Key: Project
           Value: MLOps-PoC
-
-  ####################################################
-  # IAM Roles
-  ####################################################
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -236,9 +229,6 @@ Resources:
                   - !GetAtt ArtifactsBucket.Arn
                   - !Join ['', [ !GetAtt ArtifactsBucket.Arn, '/*' ]]
 
-  ####################################################
-  # SageMaker Model Package Group
-  ####################################################
   ModelPackageGroup:
     Type: AWS::SageMaker::ModelPackageGroup
     Properties:
@@ -253,10 +243,6 @@ Resources:
           Value: MLOps-Team
         - Key: Purpose
           Value: Automated-ML-Pipeline
-
-  ####################################################
-  # CodeBuild Projects
-  ####################################################
 
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
@@ -310,10 +296,8 @@ Resources:
             Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
+        BuildSpec: buildspec-deploy.yml
 
-  ####################################################
-  # CodePipeline definition
-  ####################################################
   MLOpsPipeline:
     Type: AWS::CodePipeline::Pipeline
     DependsOn:
