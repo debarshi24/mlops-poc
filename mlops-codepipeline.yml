@@ -367,6 +367,7 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName: !Ref CodeBuildDeployProject
+                SourceVersion: SourceOutput
               InputArtifacts:
                 - Name: SourceOutput
                 - Name: TrainingOutput
