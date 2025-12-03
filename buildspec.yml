@@ -1,27 +1,14 @@
 version: 0.2
-env:
-  variables:
-    S3_PREFIX_FOR_DEPLOYMENT: models/deployed
 phases:
   install:
     runtime-versions:
       python: 3.9
     commands:
-      - echo Install phase started
       - pip install --upgrade pip
       - pip install -r requirements.txt
-  pre_build:
-    commands:
-      - echo Training phase started
-      - aws --version
   build:
     commands:
-      - echo Build started
       - python ml_pipeline.py
-  post_build:
-    commands:
-      - echo Build completed
 artifacts:
   files:
     - '**/*'
-  name: MLOpsOutput
