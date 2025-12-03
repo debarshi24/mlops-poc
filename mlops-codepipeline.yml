@@ -401,7 +401,6 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName: !Ref CodeBuildDeployProject
-                PrimarySource: SourceOutput
               InputArtifacts:
                 - Name: SourceOutput
                 - Name: TrainingOutput
