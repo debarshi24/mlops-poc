@@ -301,7 +301,7 @@ Resources:
             Value: !Ref AutoApproveModels
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec-train.yml
+        BuildSpec: buildspec.yml
 
   CodeBuildDeployProject:
     Type: AWS::CodeBuild::Project
@@ -327,6 +327,7 @@ Resources:
             Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
+        BuildSpec: buildspec-deploy.yml
 
   ####################################################
   # CodePipeline definition
