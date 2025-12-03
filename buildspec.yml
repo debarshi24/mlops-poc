@@ -8,7 +8,7 @@ phases:
       - pip install -r requirements.txt
   build:
     commands:
-      - if [ -f "deploy_model.py" ]; then python deploy_model.py; else python ml_pipeline.py; fi
+      - python ml_pipeline.py
 artifacts:
   files:
     - '**/*'
