@@ -22,7 +22,7 @@ Parameters:
     Default: arn:aws:codeconnections:eu-west-1:361509912577:connection/3600e1d6-0460-4922-938c-3e7c5ad02a74
   ModelPackageGroupName:
     Type: String
-    Default: mlops-poc-model-group-dsa
+    Default: mlops-poc-model-group-v2
     Description: SageMaker Model Package Group name
   AutoApproveModels:
     Type: String
