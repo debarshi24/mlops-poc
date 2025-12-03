@@ -1,34 +1,27 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Validated MLOps CFN: CodeStar Connection -> CodePipeline -> CodeBuild (Train, Deploy) -> SageMaker Model Package Group
-  Hardened S3, scoped IAM (for PoC), lifecycle, manual approval gate, and CodeBuild envs for DATA_S3_URI.
 
 Parameters:
   GitHubOwner:
     Type: String
-    Description: GitHub repository owner/organization
     Default: debarshi24
   GitHubRepo:
     Type: String
-    Description: GitHub repository name
     Default: mlops-poc
   GitHubBranch:
     Type: String
     Default: main
-    Description: GitHub branch to track
   CodeConnectionArn:
     Type: String
-    Description: ARN of the CodeStar Connection to GitHub (must exist in the same region as this stack)
     Default: arn:aws:codeconnections:eu-west-1:361509912577:connection/3600e1d6-0460-4922-938c-3e7c5ad02a74
   ModelPackageGroupName:
     Type: String
     Default: mlops-poc-model-group-v2
-    Description: SageMaker Model Package Group name
   AutoApproveModels:
     Type: String
     Default: 'true'
     AllowedValues: ['true', 'false']
-    Description: Automatically approve models that meet criteria
 
 Mappings:
   RegionToImage:
@@ -57,9 +50,6 @@ Resources:
           - Id: DeleteOldArtifacts
             Status: Enabled
             ExpirationInDays: 30
-      Tags:
-        - Key: Project
-          Value: MLOps-PoC
 
   CodePipelineRole:
     Type: AWS::IAM::Role
@@ -234,15 +224,6 @@ Resources:
     Properties:
       ModelPackageGroupName: !Ref ModelPackageGroupName
       ModelPackageGroupDescription: 'Model package group for demo ML models'
-      Tags:
-        - Key: Project
-          Value: MLOps-Demo
-        - Key: Environment
-          Value: Development
-        - Key: Owner
-          Value: MLOps-Team
-        - Key: Purpose
-          Value: Automated-ML-Pipeline
 
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
@@ -288,15 +269,13 @@ Resources:
             Value: !GetAtt SageMakerExecutionRole.Arn
           - Name: S3_BUCKET
             Value: !Ref ArtifactsBucket
-          - Name: DATA_S3_URI
-            Value: !Sub 's3://${ArtifactsBucket}/data/raw/Topic_15_poc_customers.csv'
           - Name: MODEL_PACKAGE_GROUP_NAME
             Value: !Ref ModelPackageGroupName
           - Name: AWS_DEFAULT_REGION
             Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec-deploy.yml
+        BuildSpec: buildspec.yml
 
   MLOpsPipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -338,7 +317,6 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName: !Ref CodeBuildProject
-                PrimarySource: SourceOutput
               InputArtifacts:
                 - Name: SourceOutput
               OutputArtifacts:
@@ -354,7 +332,7 @@ Resources:
                 Provider: Manual
                 Version: '1'
               Configuration:
-                CustomData: 'Please review generated metrics (in artifacts) and approve to deploy'
+                CustomData: 'Review metrics and approve to deploy'
               RunOrder: 1
 
         - Name: DeployToStaging
@@ -367,33 +345,14 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName: !Ref CodeBuildDeployProject
-                SourceVersion: SourceOutput
               InputArtifacts:
                 - Name: SourceOutput
-                - Name: TrainingOutput
               RunOrder: 1
 
 Outputs:
   PipelineName:
-    Description: Name of the CodePipeline
     Value: !Ref MLOpsPipeline
-
-  PipelineUrl:
-    Description: URL of the CodePipeline
-    Value: !Sub 'https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${MLOpsPipeline}/view?region=${AWS::Region}'
-
   ArtifactsBucket:
-    Description: S3 bucket for pipeline artifacts (bucket name)
     Value: !Ref ArtifactsBucket
-
   SampleCSVS3URI:
-    Description: S3 URI where the sample CSV should be placed for pipeline runs
     Value: !Sub 's3://${ArtifactsBucket}/data/raw/Topic_15_poc_customers.csv'
-
-  SageMakerRole:
-    Description: SageMaker execution role ARN
-    Value: !GetAtt SageMakerExecutionRole.Arn
-
-  ModelPackageGroup:
-    Description: SageMaker Model Package Group name
-    Value: !Ref ModelPackageGroupName
