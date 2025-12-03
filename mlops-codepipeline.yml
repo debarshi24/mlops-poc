@@ -3,10 +3,6 @@ Description: >
   Validated MLOps CFN: CodeStar Connection -> CodePipeline -> CodeBuild (Train, Deploy) -> SageMaker Model Package Group
   Hardened S3, scoped IAM (for PoC), lifecycle, manual approval gate, and CodeBuild envs for DATA_S3_URI.
 
-# NOTE: The CodeStar connection ARN (CodeConnectionArn) must be created in the SAME AWS region
-# where you deploy this stack. If you deploy to a different region than the connection, the
-# pipeline source stage will fail.
-
 Parameters:
   GitHubOwner:
     Type: String
@@ -69,7 +65,7 @@ Resources:
           Value: MLOps-PoC
 
   ####################################################
-  # IAM Roles (no explicit RoleName; CloudFormation will generate unique names)
+  # IAM Roles
   ####################################################
 
   CodePipelineRole:
@@ -121,19 +117,6 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: '*'
-
-  CodeBuildRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codebuild.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
 
   CodeBuildTrainRole:
     Type: AWS::IAM::Role
@@ -327,7 +310,6 @@ Resources:
             Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspec-deploy.yml
 
   ####################################################
   # CodePipeline definition

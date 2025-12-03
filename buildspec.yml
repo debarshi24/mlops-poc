@@ -1,10 +1,8 @@
 version: 0.2
 
 env:
-  # optional constants you can override in CodeBuild environment settings
   variables:
     S3_PREFIX_FOR_DEPLOYMENT: "models/deployed"
-    # NOTE: set S3_BUCKET, SAGEMAKER_ROLE_ARN and AWS_DEFAULT_REGION in CodeBuild environment variables
 
 phases:
   install:
