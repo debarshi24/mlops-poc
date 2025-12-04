@@ -224,6 +224,9 @@ Resources:
     Properties:
       ModelPackageGroupName: !Ref ModelPackageGroupName
       ModelPackageGroupDescription: 'Model package group for demo ML models'
+      Tags:
+        - Key: Version
+          Value: '2'
 
   CodeBuildProject:
     Type: AWS::CodeBuild::Project
