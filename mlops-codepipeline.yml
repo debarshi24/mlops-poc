@@ -367,10 +367,10 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName: !Ref CodeBuildDeployProject
-                SourceVersion: SourceOutput
+                PrimarySource: SourceOutput           # <<< REQUIRED: tells CodeBuild which artifact is the primary source
               InputArtifacts:
-                - Name: SourceOutput
-                - Name: TrainingOutput
+                - Name: SourceOutput                 # repo source artifact (primary)
+                - Name: TrainingOutput               # training output artifact (models etc.)
               RunOrder: 1
 
 Outputs:
