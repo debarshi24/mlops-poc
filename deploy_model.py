@@ -2,9 +2,25 @@ import os
 import logging
 import boto3
 from datetime import datetime
+from sagemaker import image_uris
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("deploy_model")
+
+def get_sagemaker_image_uri(region, framework="scikit-learn", version="0.23-1"):
+    """Get AWS-managed SageMaker container image URI"""
+    try:
+        return image_uris.retrieve(
+            framework=framework,
+            region=region,
+            version=version,
+            py_version="py3",
+            instance_type="ml.t3.medium"
+        )
+    except Exception as e:
+        logger.warning("Could not retrieve managed image URI: %s. Using fallback.", e)
+        # Fallback to public ECR image
+        return f"246618743249.dkr.ecr.{region}.amazonaws.com/sagemaker-scikit-learn:0.23-1-cpu-py3"
 
 def main():
     bucket = os.environ.get("S3_BUCKET")
@@ -28,11 +44,14 @@ def main():
         model_s3_uri = f"s3://{bucket}/{latest_model['Key']}"
         logger.info("Found model: %s", model_s3_uri)
         
+        image_uri = get_sagemaker_image_uri(region)
+        logger.info("Using image URI: %s", image_uri)
+        
         model_name = f"mlops-model-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
         sm.create_model(
             ModelName=model_name,
             PrimaryContainer={
-                "Image": "246618743249.dkr.ecr.eu-west-1.amazonaws.com/sagemaker-scikit-learn:0.23-1-cpu-py3",
+                "Image": image_uri,
                 "ModelDataUrl": model_s3_uri
             },
             ExecutionRoleArn=role_arn
