@@ -8,12 +8,8 @@ phases:
       - pip install -r requirements.txt
   build:
     commands:
-      - |
-        if [ "$CODEBUILD_INITIATOR" = "codepipeline/DeployToStaging" ]; then
-          python deploy_model.py
-        else
-          python ml_pipeline.py
-        fi
+      - python ml_pipeline.py
+      - python deploy_model.py
 artifacts:
   files:
     - '**/*'
