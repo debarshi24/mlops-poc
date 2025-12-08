@@ -75,6 +75,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
+                  - codeconnections:UseConnection
                 Resource: !Ref CodeConnectionArn
               - Effect: Allow
                 Action:
@@ -186,6 +187,32 @@ Resources:
                 - Name: SourceOutput
               OutputArtifacts:
                 - Name: TrainingOutput
+              RunOrder: 1
+
+        - Name: ApprovalGate
+          Actions:
+            - Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: 'Review metrics and approve to deploy'
+              RunOrder: 1
+
+        - Name: DeployToStaging
+          Actions:
+            - Name: DeployModel
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
               RunOrder: 1
 
 Outputs:
