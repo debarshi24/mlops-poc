@@ -72,6 +72,7 @@ Resources:
                   - codebuild:BatchGetBuilds
                 Resource:
                   - !GetAtt CodeBuildProject.Arn
+                  - !GetAtt CodeBuildDeployProject.Arn
               - Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
@@ -82,6 +83,7 @@ Resources:
                   - iam:PassRole
                 Resource:
                   - !GetAtt CodeBuildRole.Arn
+                  - !GetAtt CodeBuildDeployRole.Arn
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -116,6 +118,54 @@ Resources:
                   - !GetAtt ArtifactsBucket.Arn
                   - !Join ['', [ !GetAtt ArtifactsBucket.Arn, '/*' ]]
 
+  SageMakerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+
+  CodeBuildDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: CodeBuildDeployPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Join ['', [ !GetAtt ArtifactsBucket.Arn, '/*' ]]
+              - Effect: Allow
+                Action:
+                  - sagemaker:CreateModel
+                  - sagemaker:CreateEndpointConfig
+                  - sagemaker:CreateEndpoint
+                Resource: !Sub 'arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt SageMakerExecutionRole.Arn
+
   ModelPackageGroup:
     Type: AWS::SageMaker::ModelPackageGroup
     Properties:
@@ -140,6 +190,30 @@ Resources:
             Value: !Sub 's3://${ArtifactsBucket}/data/raw/Topic_15_poc_customers.csv'
           - Name: AWS_DEFAULT_REGION
             Value: !Ref AWS::Region
+          - Name: SAGEMAKER_ROLE_ARN
+            Value: ''
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.yml
+
+  CodeBuildDeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${AWS::StackName}-ml-deploy'
+      ServiceRole: !GetAtt CodeBuildDeployRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !FindInMap [RegionToImage, default, CodeBuildImage]
+        EnvironmentVariables:
+          - Name: S3_BUCKET
+            Value: !Ref ArtifactsBucket
+          - Name: SAGEMAKER_ROLE_ARN
+            Value: !GetAtt SageMakerExecutionRole.Arn
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
       Source:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
@@ -148,6 +222,7 @@ Resources:
     Type: AWS::CodePipeline::Pipeline
     DependsOn:
       - CodeBuildProject
+      - CodeBuildDeployProject
       - CodePipelineRole
     Properties:
       Name: !Sub '${AWS::StackName}-pipeline'
@@ -210,7 +285,7 @@ Resources:
                 Provider: CodeBuild
                 Version: '1'
               Configuration:
-                ProjectName: !Ref CodeBuildProject
+                ProjectName: !Ref CodeBuildDeployProject
               InputArtifacts:
                 - Name: SourceOutput
               RunOrder: 1
